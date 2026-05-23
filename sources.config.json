@@ -519,7 +519,7 @@
     "url": "https://rsshub.app/wallstreetcn/news/global",
     "category": "finance",
     "subcategory": "news",
-    "enabled": false,
+    "enabled": true,
     "locales": [
       "zh"
     ]
