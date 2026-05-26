@@ -52,10 +52,9 @@ jobs:
           REPORT_TZ: ${{ vars.REPORT_TZ }}
           REPORT_HOUR: ${{ vars.REPORT_HOUR }}
           REPORT_DAYS: ${{ vars.REPORT_DAYS }}
-          EVENT_NAME: ${{ github.event_name }}
         run: |
+        EVENT_NAME="${{ github.event_name }}"
           set -euo pipefail
-
           # Manual triggers always run — user clicked Run workflow.
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "Manual trigger — bypassing time gate"
