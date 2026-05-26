@@ -53,11 +53,11 @@ jobs:
           REPORT_HOUR: ${{ vars.REPORT_HOUR }}
           REPORT_DAYS: ${{ vars.REPORT_DAYS }}
         run: |
-        EVENT_NAME="${{ github.event_name }}"
+          EVENT_NAME="${{ github.event_name }}"
           set -euo pipefail
-          # Manual triggers always run — user clicked Run workflow.
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            echo "Manual trigger — bypassing time gate"
+          # Manual triggers and code pushes always run — bypass time gate.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "pull_request" ]; then
+            echo "Trigger '$EVENT_NAME' — bypassing time gate"
             echo "should-run=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
