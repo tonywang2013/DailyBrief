@@ -29,7 +29,7 @@ name: Daily Brief
 on:
   schedule:
     # Hourly trigger. The gate job decides which one actually does work.
-    - cron: '0 8 * * *'
+    - cron: '0 9 * * *'
   workflow_dispatch:
   push:
     branches:
