@@ -49,75 +49,78 @@ jobs:
     outputs:
       should-run: ${{ steps.check.outputs.should-run }}
     steps:
-      - name: Check schedule
-        id: check
-        env:
-          REPORT_TZ: ${{ vars.REPORT_TZ }}
-          REPORT_HOUR: ${{ vars.REPORT_HOUR }}
-          REPORT_DAYS: ${{ vars.REPORT_DAYS }}
-        run: |
-          EVENT_NAME="${{ github.event_name }}"
-          set -euo pipefail
-          # Manual triggers and code pushes always run — bypass time gate.
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "pull_request" ]; then
-            echo "Trigger '$EVENT_NAME' — bypassing time gate"
-            echo "should-run=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+      - name: Check schedule                                                                                                                                                                                                 id: check
+          env:                                                                                                                                                                                                                   REPORT_TZ: ${{ vars.REPORT_TZ }}
+            REPORT_HOUR: ${{ vars.REPORT_HOUR }}                                                                                                                                                                                 REPORT_DAYS: ${{ vars.REPORT_DAYS }}
+          run: |
+            EVENT_NAME="${{ github.event_name }}"
+            set -euo pipefail
 
-          TZ_VAL="${REPORT_TZ:-UTC}"
-          HOURS_VAL="${REPORT_HOUR:-8}"
-          DAYS_VAL="${REPORT_DAYS:-*}"
-
-          NOW_HOUR=$(TZ="$TZ_VAL" date +%-H)
-          NOW_DOW=$(TZ="$TZ_VAL" date +%w)
-          NOW_PRINT=$(TZ="$TZ_VAL" date '+%Y-%m-%d %H:%M %Z')
-
-          echo "Now in $TZ_VAL: $NOW_PRINT (hour=$NOW_HOUR, dow=$NOW_DOW)"
-          echo "Configured REPORT_HOUR='$HOURS_VAL', REPORT_DAYS='$DAYS_VAL'"
-
-          # Hour match: comma-separated list of integers (0-23).
-          hour_match=false
-          IFS=',' read -ra HLIST <<< "$HOURS_VAL"
-          for h in "${HLIST[@]}"; do
-            h_trim="${h// /}"
-            if [ "$NOW_HOUR" = "$h_trim" ]; then
-              hour_match=true
-              break
+            # Manual triggers and code pushes always run
+            if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "push" ] || [ "$EVENT_NAME" = "pull_request" ]; then
+              echo "Trigger '$EVENT_NAME' — bypassing time gate"
+              echo "should-run=true" >> "$GITHUB_OUTPUT"
+              exit 0
             fi
-          done
 
-          # Day-of-week match: '*', single digits, ranges "a-b", or comma combos.
-          day_match=false
-          if [ "$DAYS_VAL" = "*" ]; then
-            day_match=true
-          else
-            IFS=',' read -ra DLIST <<< "$DAYS_VAL"
-            for d in "${DLIST[@]}"; do
-              d_trim="${d// /}"
-              if [[ "$d_trim" == *-* ]]; then
-                start="${d_trim%-*}"
-                end="${d_trim#*-}"
-                if [ "$NOW_DOW" -ge "$start" ] && [ "$NOW_DOW" -le "$end" ]; then
-                  day_match=true
-                  break
-                fi
-              else
-                if [ "$NOW_DOW" = "$d_trim" ]; then
-                  day_match=true
-                  break
-                fi
+            TZ_VAL="${REPORT_TZ:-UTC}"
+            HOURS_VAL="${REPORT_HOUR:-8}"
+            DAYS_VAL="${REPORT_DAYS:-*}"
+
+            # Use %H (always two digits) then strip leading zero numerically to avoid format quirks
+            NOW_HOUR_RAW=$(TZ="$TZ_VAL" date +%H)
+            NOW_HOUR=$((10#$NOW_HOUR_RAW))   # 10# prevents octal interpretation
+            NOW_DOW=$(TZ="$TZ_VAL" date +%w)
+            NOW_PRINT=$(TZ="$TZ_VAL" date '+%Y-%m-%d %H:%M %Z')
+
+            echo "Now in $TZ_VAL: $NOW_PRINT (hour=$NOW_HOUR, dow=$NOW_DOW)"
+            echo "Configured REPORT_HOUR='$HOURS_VAL', REPORT_DAYS='$DAYS_VAL'"
+
+            # Hour match: comma-separated list of integers (0-23). Strip spaces and leading zeros.
+            hour_match=false
+            IFS=',' read -ra HLIST <<< "$HOURS_VAL"
+            for h in "${HLIST[@]}"; do
+              h_trim="${h// /}"
+              h_num=$((10#$h_trim))  # normalize "08" → 8
+              if [ "$NOW_HOUR" -eq "$h_num" ]; then
+                hour_match=true
+                break
               fi
             done
-          fi
 
-          if [ "$hour_match" = "true" ] && [ "$day_match" = "true" ]; then
-            echo "✓ Match — proceeding to build"
-            echo "should-run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "✗ No match — skipping (hour_match=$hour_match, day_match=$day_match)"
-            echo "should-run=false" >> "$GITHUB_OUTPUT"
-          fi
+            # Day-of-week match
+            day_match=false
+            if [ "$DAYS_VAL" = "*" ]; then
+              day_match=true
+            else
+              IFS=',' read -ra DLIST <<< "$DAYS_VAL"
+              for d in "${DLIST[@]}"; do
+                d_trim="${d// /}"
+                if [[ "$d_trim" == *-* ]]; then
+                  start="${d_trim%-*}"
+                  end="${d_trim#*-}"
+                  if [ "$NOW_DOW" -ge "$start" ] && [ "$NOW_DOW" -le "$end" ]; then
+                    day_match=true
+                    break
+                  fi
+                else
+                  if [ "$NOW_DOW" -eq "$d_trim" ]; then
+                    day_match=true
+                    break
+                  fi
+                fi
+              done
+            fi
+
+            echo "hour_match=$hour_match, day_match=$day_match"
+
+            if [ "$hour_match" = "true" ] && [ "$day_match" = "true" ]; then
+              echo "✓ Match — proceeding to build"
+              echo "should-run=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "✗ No match — skipping"
+              echo "should-run=false" >> "$GITHUB_OUTPUT"
+            fi
 
   build:
     name: Build & publish
@@ -176,4 +179,4 @@ jobs:
           publish_dir: ./daily_reports
           publish_branch: gh-pages
           keep_files: false  # we restored everything above, so a clean publish is fine
-          commit_message: 'daily: report for ${{ github.run_id }}'
+          commit_message: ' fix(ci): robust hour matching for schedule trigger'
