@@ -1,5 +1,5 @@
 import { jsonrepair } from "jsonrepair";
-import { runLlm } from "./llm";
+import { getBackend, runLlm, type LlmBackendId } from "./llm";
 import { extractJson } from "./json-util";
 import { SYSTEM_PROMPT_DIGEST_EN, SYSTEM_PROMPT_DIGEST_ZH } from "./prompts";
 import { REPORT_LOCALE } from "../sources/registry";
@@ -102,7 +102,10 @@ function selectRoundRobin(
   return out;
 }
 
-async function callOnce(userPayloadJson: string): Promise<DailyReport> {
+async function callOnce(
+  userPayloadJson: string,
+  opts: { backendOverride?: LlmBackendId } = {},
+): Promise<DailyReport> {
   // Claude Code CLI's built-in system prompt biases the model toward
   // conversational markdown output. Anchor the format expectation in the
   // user message (instruction recency wins) *and* explicitly demand every
@@ -153,6 +156,7 @@ async function callOnce(userPayloadJson: string): Promise<DailyReport> {
   const { text } = await runLlm({
     systemPrompt: SYSTEM_PROMPT_DIGEST,
     userPrompt,
+    backendOverride: opts.backendOverride,
   });
   const cleaned = extractJson(text);
   let parsed: Partial<DailyReport>;
@@ -193,6 +197,39 @@ async function callOnce(userPayloadJson: string): Promise<DailyReport> {
   };
 }
 
+/**
+ * Read LLM_FALLBACK_BACKEND. Returns a different backend than the primary
+ * if one is configured, else null. Same value as primary (or invalid /
+ * unset) returns null — same-model retries are pointless for deterministic
+ * errors like content moderation, so callers should treat null as "no
+ * fallback available".
+ */
+function getFallbackBackend(): LlmBackendId | null {
+  const raw = process.env.LLM_FALLBACK_BACKEND?.trim().toLowerCase();
+  if (!raw) return null;
+  const valid: ReadonlySet<LlmBackendId> = new Set([
+    "claude-cli",
+    "anthropic",
+    "openai",
+    "deepseek",
+    "minimax",
+  ]);
+  if (!valid.has(raw as LlmBackendId)) {
+    console.warn(
+      `[pipeline] ignoring LLM_FALLBACK_BACKEND='${raw}' (not a known backend)`,
+    );
+    return null;
+  }
+  const fallback = raw as LlmBackendId;
+  if (fallback === getBackend()) {
+    console.warn(
+      `[pipeline] LLM_FALLBACK_BACKEND='${fallback}' matches LLM_BACKEND; no-op`,
+    );
+    return null;
+  }
+  return fallback;
+}
+
 export async function generateDailyReport(
   articles: ArticleInput[],
 ): Promise<{ report: DailyReport; tokensUsed: number }> {
@@ -222,14 +259,23 @@ export async function generateDailyReport(
   try {
     report = await callOnce(userPayloadJson);
   } catch (firstErr) {
-    // One retry — claude CLI occasionally wraps in narration on the first
-    // pass but obeys when the same prompt is repeated.
-    console.warn(
-      `[pipeline] first claude CLI call failed, retrying: ${
-        firstErr instanceof Error ? firstErr.message : String(firstErr)
-      }`,
-    );
-    report = await callOnce(userPayloadJson);
+    const errMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+    const fallback = getFallbackBackend();
+    if (fallback) {
+      // Deterministic errors (e.g. 400 "Content Exists Risk" from a
+      // content-moderation filter) won't recover by retrying the same
+      // model with the same payload — swap to a different backend.
+      console.warn(
+        `[pipeline] primary ${getBackend()} failed (${errMsg}); falling back to ${fallback}`,
+      );
+      report = await callOnce(userPayloadJson, { backendOverride: fallback });
+      console.log(`[pipeline] digest produced by ${fallback}`);
+    } else {
+      // No fallback configured — same-model retry is the legacy behaviour
+      // and helps with transient CLI narration flakiness.
+      console.warn(`[pipeline] first call failed, retrying: ${errMsg}`);
+      report = await callOnce(userPayloadJson);
+    }
   }
 
   // Max subscription has no per-call token meter — we expose 0 for schema

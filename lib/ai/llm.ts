@@ -27,6 +27,13 @@ export interface LlmRunOptions {
   systemPrompt: string;
   userPrompt: string;
   timeoutMs?: number;
+  /**
+   * Override the active backend for this specific call. Used by the
+   * pipeline's fallback retry to swap in a different model when the
+   * primary rejects the request (e.g. content moderation, rate limit).
+   * If omitted, falls back to the LLM_BACKEND env var.
+   */
+  backendOverride?: LlmBackendId;
 }
 
 export interface LlmRunResult {
@@ -59,12 +66,7 @@ export function getBackend(): LlmBackendId {
   return raw as LlmBackendId;
 }
 
-/**
- * Returns the active model name for the configured backend, useful for
- * stamping a MODEL_TAG into report metadata.
- */
-function getActiveModel(): string {
-  const backend = getBackend();
+function getActiveModel(backend: LlmBackendId): string {
   switch (backend) {
     case "claude-cli":
       return CLAUDE_MODEL;
@@ -77,13 +79,24 @@ function getActiveModel(): string {
   }
 }
 
+/**
+ * Resolve the effective backend for a call: explicit override wins, else the
+ * LLM_BACKEND env var. Exported so the pipeline can log the actual backend
+ * that produced a report (which may differ from the configured one if a
+ * fallback kicked in).
+ */
+export function resolveBackend(override?: LlmBackendId): LlmBackendId {
+  return override ?? getBackend();
+}
+
 /** A short tag suitable for embedding in report JSON: "<backend>-<model>" */
-export function getModelTag(): string {
-  return `${getBackend()}-${getActiveModel()}`;
+export function getModelTag(backendOverride?: LlmBackendId): string {
+  const backend = resolveBackend(backendOverride);
+  return `${backend}-${getActiveModel(backend)}`;
 }
 
 export async function runLlm(opts: LlmRunOptions): Promise<LlmRunResult> {
-  const backend = getBackend();
+  const backend = resolveBackend(opts.backendOverride);
   switch (backend) {
     case "claude-cli":
       return runClaudeCli(opts);
