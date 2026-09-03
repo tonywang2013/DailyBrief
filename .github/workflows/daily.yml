@@ -21,14 +21,14 @@ name: Daily Brief
 # After first successful run your report is live at:
 #   https://<your-username>.github.io/<repo-name>/
 #
-# Schedule mechanics: cron fires daily at 12:07 UTC (20:07 CST) to avoid GitHub's
+# Schedule mechanics: cron fires daily at 23:07 UTC (07:07 CST next morning) to avoid GitHub's
 # :00 high-load delays. A short "gate" job checks REPORT_DAYS and only allows
 # the build job to run on matching days. workflow_dispatch and push always bypass.
 
 on:
   schedule:
-    # Daily at 12:07 UTC = 20:07 Beijing time. Gate filters by day-of-week.
-    - cron: '7 12 * * *'
+    # Daily at 23:07 UTC = 07:07 Beijing time (next morning). Gate filters by day-of-week.
+    - cron: '7 23 * * *'
   workflow_dispatch:
   push:
     branches:
